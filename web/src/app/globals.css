@@ -1,0 +1,41 @@
+@import "tailwindcss";
+
+:root {
+  --background: #f7f7f2;
+  --foreground: #23221b;
+
+  /* Sampled from assets/templates/LD**000.png — confirm against real brand
+     guidelines when available. */
+  --color-brand-orange: #f1562a;
+  --color-brand-lime: #d6de31;
+  --color-brand-dark: #302f26;
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-brand-orange: var(--color-brand-orange);
+  --color-brand-lime: var(--color-brand-lime);
+  --color-brand-dark: var(--color-brand-dark);
+  --font-sans: var(--font-agrandir);
+}
+
+body {
+  background: var(--background);
+  color: var(--foreground);
+}
+
+/* Every native <select> in the app gets the same chevron — browsers render
+   wildly different default arrows otherwise. All custom <details>/<summary>
+   dropdowns (CustomSelect, RoomTypeMultiSelect, admin's accordions) use the
+   same chevron SVG directly via components/ui/ChevronDownIcon.tsx instead,
+   since they're not <select> elements and this rule can't reach them. */
+select {
+  appearance: none;
+  -webkit-appearance: none;
+  -moz-appearance: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 20 20' fill='none' stroke='rgba(48,47,38,0.5)' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M5 8l5 5 5-5'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 0.9rem center;
+  background-size: 0.75rem;
+}

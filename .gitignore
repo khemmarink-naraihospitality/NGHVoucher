@@ -1,0 +1,13 @@
+# macOS
+.DS_Store
+
+# Claude Code local settings (machine-specific, not shared)
+.claude/settings.local.json
+
+# Playwright MCP browser automation cache/output
+.playwright-mcp/
+
+# Next.js build output, wherever it ends up (belt and suspenders alongside
+# web/.gitignore's own /.next/ — this one catches any accidental nesting)
+**/.next/
+**/node_modules/
