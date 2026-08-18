@@ -18,6 +18,8 @@ export interface HistoryExportRow {
   created_at: string;
   note: string | null;
   share_code: string | null;
+  issuer_name: string | null;
+  external_file_url: string | null;
 }
 
 // Column set is a superset of the on-screen History table — adds Property
@@ -38,6 +40,7 @@ const COLUMNS = [
   { key: "validityStart", header: "Validity Start" },
   { key: "validityEnd", header: "Validity End" },
   { key: "status", header: "Status" },
+  { key: "issuer", header: "Issuer" },
   { key: "claimBy", header: "Claimed By" },
   { key: "reservationNo", header: "Reservation No." },
   { key: "revokedReason", header: "Revoke Reason" },
@@ -45,6 +48,7 @@ const COLUMNS = [
   { key: "note", header: "Note" },
   { key: "jpegUrl", header: "JPEG URL" },
   { key: "pdfUrl", header: "PDF URL" },
+  { key: "originalFileUrl", header: "Original File (Drive)" },
 ] as const;
 
 type ColumnKey = (typeof COLUMNS)[number]["key"];
@@ -61,6 +65,7 @@ function toValues(row: HistoryExportRow): Record<ColumnKey, string | number> {
     validityStart: formatVoucherDate(row.validity_start),
     validityEnd: formatVoucherDate(row.validity_end),
     status: row.status,
+    issuer: row.issuer_name || "",
     claimBy: row.claim_by || "",
     reservationNo: row.reservation_no || "",
     revokedReason: row.revoked_reason || "",
@@ -68,6 +73,7 @@ function toValues(row: HistoryExportRow): Record<ColumnKey, string | number> {
     note: row.note || "",
     jpegUrl: row.share_code ? `${process.env.NEXT_PUBLIC_APP_URL}/v/${row.share_code}/jpg` : "",
     pdfUrl: row.share_code ? `${process.env.NEXT_PUBLIC_APP_URL}/v/${row.share_code}/pdf` : "",
+    originalFileUrl: row.external_file_url || "",
   };
 }
 

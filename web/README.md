@@ -1,36 +1,87 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Lub d Voucher Web App
 
-## Getting Started
+Internal tool for Lub d hotels: an **issuer** submits a complimentary voucher
+request, an assigned **approver** approves or rejects it via a token-based
+email link (no login required), and on approval a JPEG + PDF voucher is
+rendered and made available through a short, unguessable share link. An
+**admin** panel manages properties, room types, approvers, users, and the
+outbound email system; a **front_office** role can look up and claim
+approved vouchers at check-in. See `docs/PRD_Voucher_Generator_WebApp_EN.md`
+(one level up from this folder) for the full product spec.
 
-First, run the development server:
+Stack: Next.js (App Router, Server Actions) + Supabase (Postgres, Auth,
+Storage) + Tailwind CSS v4, deployed on Vercel.
+
+## Local setup
 
 ```bash
+npm install
+cp .env.local.example .env.local   # then fill in real values, see below
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Open [http://localhost:3000](http://localhost:3000). Sign-in is Google
+OAuth only — you'll need a `profiles` row with a `role` set (via the
+Supabase dashboard/SQL, or the admin panel once you have one admin
+account) before most of the app is usable.
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+### Environment variables
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+All required variables are listed with comments in `.env.local.example`.
+Notable ones:
 
-## Learn More
+- `SUPABASE_SERVICE_ROLE_KEY` — server-only, bypasses RLS. Used for
+  anything that has to run on behalf of a caller with no real session or
+  no standing grant of their own: signing short-lived URLs for voucher/
+  template/signature files (private Storage buckets), and uploading
+  voucher exports. Never expose this to the client.
+- `GMAIL_USER` / `GMAIL_APP_PASSWORD` / `GMAIL_SMTP_PORT` — outbound email
+  goes through Gmail/Google Workspace SMTP directly (not a dedicated ESP —
+  see `src/lib/email/mailer.ts` for why). Generate an App Password at
+  Google Account → Security → 2-Step Verification → App passwords, then
+  verify with `npm run email:test -- you@example.com`. These can also be
+  set from the Admin → Email panel instead, which takes priority over the
+  env vars at send time.
+- `CRON_SECRET` — authorizes Vercel Cron's daily call to
+  `/api/cron/expire-vouchers`. Must also be set as a Vercel project env
+  var (Vercel sends it automatically as `Authorization: Bearer
+  $CRON_SECRET` once configured there — nothing else to wire up).
 
-To learn more about Next.js, take a look at the following resources:
+## Database & migrations
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+Schema and RLS policies live in `supabase/migrations/`, applied in
+order. Every write is enforced by Postgres RLS, not just app-level
+checks — see the comment at the top of `src/app/admin/actions.ts`. To
+apply migrations to a Supabase project:
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+```bash
+supabase link --project-ref <your-project-ref>
+supabase db push
+```
 
-## Deploy on Vercel
+New migrations are numbered `NNNN_description.sql`, one file per logical
+change — check the highest existing number in `supabase/migrations/`
+before adding one.
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+## Deploying
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+Deploys on Vercel; `vercel.json` configures the daily `expire-vouchers`
+cron job (`0 1 * * *` UTC). Checklist for a new environment:
+
+1. Set every var from `.env.local.example` as a Vercel project env var
+   (including `CRON_SECRET` — see above).
+2. Run the Supabase migrations against that project (`supabase db push`).
+3. Confirm the Storage buckets exist and are private (`vouchers`,
+   `signatures`, `templates` — created by the migrations, but worth a
+   quick check in the Supabase dashboard).
+4. Log in once with an intended admin's Google account, then set that
+   `profiles` row's `role` to `admin` directly in the database (there's
+   no bootstrap UI for the very first admin).
+
+## Scripts
+
+- `npm run dev` — local dev server.
+- `npm run build` / `npm run start` — production build/serve.
+- `npm run lint` — ESLint.
+- `npm run email:test -- you@example.com` — standalone SMTP check against
+  the `GMAIL_*` env vars (independent of the DB-backed settings).

@@ -1,7 +1,13 @@
 "use server";
 
 import { createClient } from "@/lib/supabase/server";
+import { resolveStorageImageUrl } from "@/lib/supabase/signedUrl";
 import type { TemplateConfigJson } from "@/lib/templates/config";
+
+// Button-triggered, one-off preview — same generous TTL as the rest of
+// the app's non-download image consumers (the modal might stay open a
+// while).
+const IMAGE_URL_TTL_SECONDS = 3600;
 
 export interface VoucherRenderData {
   id: string;
@@ -34,5 +40,19 @@ export async function getVoucherRenderData(voucherId: string): Promise<VoucherRe
     return null;
   }
   const rows = data as VoucherRenderData[] | null;
-  return rows?.[0] ?? null;
+  const row = rows?.[0] ?? null;
+  if (!row) return null;
+
+  const [resolvedImagePath, resolvedSignatureUrl] = await Promise.all([
+    row.template_config?.imagePath
+      ? resolveStorageImageUrl("templates", row.template_config.imagePath, IMAGE_URL_TTL_SECONDS)
+      : null,
+    resolveStorageImageUrl("signatures", row.approver_signature_url, IMAGE_URL_TTL_SECONDS),
+  ]);
+
+  return {
+    ...row,
+    template_config: { ...row.template_config, imagePath: resolvedImagePath ?? row.template_config?.imagePath },
+    approver_signature_url: resolvedSignatureUrl,
+  };
 }

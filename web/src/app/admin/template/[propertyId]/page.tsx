@@ -3,6 +3,7 @@ import { redirect, notFound } from "next/navigation";
 import { AppHeader } from "@/components/layout/AppHeader";
 import { createClient } from "@/lib/supabase/server";
 import { getCurrentProfile } from "@/lib/auth/profile";
+import { resolveStorageImageUrl } from "@/lib/supabase/signedUrl";
 import { DEFAULT_BREAKFAST_CHECKBOX, DEFAULT_FIELDS, DEFAULT_SIGNATURE_FIELD } from "@/lib/templates/config";
 import type { TemplateConfigJson } from "@/lib/templates/config";
 import { TemplateFieldEditor } from "@/components/admin/TemplateFieldEditor";
@@ -24,6 +25,9 @@ export default async function TemplateLayoutPage({
   const profile = await getCurrentProfile();
   if (!profile) {
     redirect(`/login?next=/admin/template/${propertyId}`);
+  }
+  if (profile.status !== "active") {
+    redirect("/pending");
   }
   if (profile.role !== "admin") {
     redirect("/");
@@ -48,6 +52,20 @@ export default async function TemplateLayoutPage({
     redirect("/admin");
   }
 
+  // Admin might sit in the layout editor a while — same generous TTL as
+  // the rest of the admin panel and the create-voucher workspace.
+  const IMAGE_URL_TTL_SECONDS = 3600;
+  const [resolvedImagePath, resolvedSignatures] = await Promise.all([
+    resolveStorageImageUrl("templates", row.template_config.imagePath, IMAGE_URL_TTL_SECONDS),
+    Promise.all(
+      (signedApprovers ?? []).map(async (a) => ({
+        id: a.id,
+        name: a.name,
+        signatureUrl: await resolveStorageImageUrl("signatures", a.signature_url as string, IMAGE_URL_TTL_SECONDS),
+      })),
+    ),
+  ]);
+
   return (
     <div className="flex flex-1 flex-col bg-background">
       <AppHeader activeTab="admin" userEmail={profile.email} isAdmin />
@@ -69,16 +87,16 @@ export default async function TemplateLayoutPage({
             propertyId={row.id}
             propertyCode={row.code}
             propertyName={row.name}
-            imagePath={row.template_config.imagePath}
+            imagePath={resolvedImagePath ?? row.template_config.imagePath}
             canvasWidth={row.template_config.canvasWidth}
             canvasHeight={row.template_config.canvasHeight}
             initialFields={row.template_config.fields ?? DEFAULT_FIELDS}
             initialBreakfastCheckbox={row.template_config.breakfastCheckbox ?? DEFAULT_BREAKFAST_CHECKBOX}
             initialSignatureField={row.template_config.signatureField ?? DEFAULT_SIGNATURE_FIELD}
-            sampleSignatures={(signedApprovers ?? []).map((a) => ({
+            sampleSignatures={resolvedSignatures.map((a) => ({
               id: a.id,
               name: a.name,
-              signatureUrl: a.signature_url as string,
+              signatureUrl: a.signatureUrl ?? "",
             }))}
           />
         </div>

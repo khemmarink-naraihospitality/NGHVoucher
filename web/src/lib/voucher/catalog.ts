@@ -1,5 +1,12 @@
 import { createClient } from "@/lib/supabase/server";
+import { resolveStorageImageUrl } from "@/lib/supabase/signedUrl";
 import type { TemplateConfigJson } from "@/lib/templates/config";
+
+// Issuer might sit on the create-voucher page composing a request for a
+// while — generous enough that the signed image URLs won't go stale
+// mid-session (unlike the voucher-download links, which are one-shot
+// redirects and use a much shorter TTL).
+const IMAGE_URL_TTL_SECONDS = 3600;
 
 export interface CatalogProperty {
   id: number;
@@ -52,5 +59,27 @@ export async function fetchWorkspaceCatalog(): Promise<VoucherWorkspaceCatalog> 
     return EMPTY_CATALOG;
   }
 
-  return (data as VoucherWorkspaceCatalog | null) ?? EMPTY_CATALOG;
+  const catalog = (data as VoucherWorkspaceCatalog | null) ?? EMPTY_CATALOG;
+
+  const [properties, approvers] = await Promise.all([
+    Promise.all(
+      catalog.properties.map(async (property) => {
+        if (!property.templateConfig?.imagePath) return property;
+        const imagePath = await resolveStorageImageUrl(
+          "templates",
+          property.templateConfig.imagePath,
+          IMAGE_URL_TTL_SECONDS,
+        );
+        return { ...property, templateConfig: { ...property.templateConfig, imagePath: imagePath ?? property.templateConfig.imagePath } };
+      }),
+    ),
+    Promise.all(
+      catalog.approvers.map(async (approver) => ({
+        ...approver,
+        signatureUrl: await resolveStorageImageUrl("signatures", approver.signatureUrl, IMAGE_URL_TTL_SECONDS),
+      })),
+    ),
+  ]);
+
+  return { ...catalog, properties, approvers };
 }

@@ -1,4 +1,5 @@
 import { createClient } from "@/lib/supabase/server";
+import { resolveStorageImageUrl } from "@/lib/supabase/signedUrl";
 import { buildTemplateConfig, type TemplateConfigJson } from "@/lib/templates/config";
 import { formatPurposeLabel, formatValidityRange } from "@/lib/voucher/format";
 import { ApprovalPreview } from "@/components/approve/ApprovalPreview";
@@ -61,6 +62,17 @@ export default async function ApprovePage({ params }: { params: Promise<{ token:
   const runningNumbers = rows.map((row) => row.running_no);
   const template = buildTemplateConfig(first.property_code, first.property_name, first.template_config);
   const isExpired = new Date(first.approval_token_expires_at) < new Date();
+
+  // Approver might sit here reviewing for a while before deciding —
+  // generous TTL, matching the rest of the app's non-download image
+  // consumers (unlike the voucher-download links, which are one-shot
+  // redirects and use a much shorter TTL).
+  const IMAGE_URL_TTL_SECONDS = 3600;
+  const [resolvedImagePath, resolvedSignatureUrl] = await Promise.all([
+    template ? resolveStorageImageUrl("templates", template.imagePath, IMAGE_URL_TTL_SECONDS) : null,
+    resolveStorageImageUrl("signatures", first.approver_signature_url, IMAGE_URL_TTL_SECONDS),
+  ]);
+  const resolvedTemplate = template ? { ...template, imagePath: resolvedImagePath ?? template.imagePath } : null;
 
   return (
     <div className="mx-auto grid w-full max-w-6xl gap-8 px-4 py-10 lg:grid-cols-[minmax(0,420px)_1fr]">
@@ -158,12 +170,12 @@ export default async function ApprovePage({ params }: { params: Promise<{ token:
       </section>
 
       <section className="lg:sticky lg:top-10 lg:self-start">
-        {template ? (
+        {resolvedTemplate ? (
           <ApprovalPreview
-            template={template}
+            template={resolvedTemplate}
             rows={rows}
             approverPosition={first.approver_position}
-            approverSignatureUrl={first.approver_signature_url}
+            approverSignatureUrl={resolvedSignatureUrl}
           />
         ) : (
           <p className="text-sm text-brand-dark/60">No visual template available for this property yet.</p>

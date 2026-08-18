@@ -4,6 +4,7 @@ import { AppHeader } from "@/components/layout/AppHeader";
 import { createClient } from "@/lib/supabase/server";
 import { getCurrentProfile } from "@/lib/auth/profile";
 import { getPreviewRole } from "@/lib/auth/previewRole";
+import { resolveStorageImageUrl } from "@/lib/supabase/signedUrl";
 import {
   APPROVAL_EMAIL_PLACEHOLDERS,
   DEFAULT_APPROVAL_EMAIL_TEMPLATE,
@@ -41,6 +42,7 @@ import {
   revokePropertyAccess,
   saveEmailSettings,
   setUserRole,
+  setUserStatus,
   toggleApproverActive,
   toggleApproverProperty,
   updateApproverDetails,
@@ -75,6 +77,7 @@ interface Profile {
   email: string;
   full_name: string | null;
   role: "issuer" | "approver" | "admin" | "front_office";
+  status: "pending" | "active" | "rejected";
 }
 interface UserPropertyRow {
   user_id: string;
@@ -136,6 +139,9 @@ export default async function AdminPage() {
   if (!profile) {
     redirect("/login?next=/admin");
   }
+  if (profile.status !== "active") {
+    redirect("/pending");
+  }
   if (profile.role !== "admin") {
     redirect("/");
   }
@@ -155,7 +161,7 @@ export default async function AdminPage() {
     supabase.from("room_types").select("id, property_id, name, is_active").order("name"),
     supabase.from("approvers").select("id, name, email, is_active, position, signature_url").order("name"),
     supabase.from("approver_properties").select("approver_id, property_id"),
-    supabase.from("profiles").select("id, email, full_name, role").order("email"),
+    supabase.from("profiles").select("id, email, full_name, role, status").order("email"),
     supabase.from("user_properties").select("user_id, property_id"),
     supabase
       .from("email_settings")
@@ -180,11 +186,36 @@ export default async function AdminPage() {
       .maybeSingle(),
   ]);
 
-  const properties = (propertiesRes.data as Property[] | null) ?? [];
   const roomTypes = (roomTypesRes.data as RoomType[] | null) ?? [];
-  const approvers = (approversRes.data as Approver[] | null) ?? [];
   const approverProperties = (approverPropertiesRes.data as ApproverPropertyRow[] | null) ?? [];
+  // Admin browses this page for a while — same generous TTL as the
+  // create-voucher workspace (lib/voucher/catalog.ts), not the short one
+  // used for one-shot voucher downloads.
+  const IMAGE_URL_TTL_SECONDS = 3600;
+  const properties = await Promise.all(
+    ((propertiesRes.data as Property[] | null) ?? []).map(async (property) => {
+      if (!property.template_config?.imagePath) return property;
+      const imagePath = await resolveStorageImageUrl(
+        "templates",
+        property.template_config.imagePath,
+        IMAGE_URL_TTL_SECONDS,
+      );
+      return {
+        ...property,
+        template_config: { ...property.template_config, imagePath: imagePath ?? property.template_config.imagePath },
+      };
+    }),
+  );
+  const approvers = await Promise.all(
+    ((approversRes.data as Approver[] | null) ?? []).map(async (approver) => ({
+      ...approver,
+      signature_url: await resolveStorageImageUrl("signatures", approver.signature_url, IMAGE_URL_TTL_SECONDS),
+    })),
+  );
   const profiles = (profilesRes.data as Profile[] | null) ?? [];
+  const pendingProfiles = profiles.filter((p) => p.status === "pending");
+  const activeProfiles = profiles.filter((p) => p.status === "active");
+  const rejectedProfiles = profiles.filter((p) => p.status === "rejected");
   const userProperties = (userPropertiesRes.data as UserPropertyRow[] | null) ?? [];
   // The real app password never enters JSX/props below — only this
   // derived boolean does. gmail_user/gmail_from_name aren't secret and are
@@ -540,11 +571,79 @@ export default async function AdminPage() {
 
         {/* Users & property access */}
         <section id="users">
+          {pendingProfiles.length > 0 ? (
+            <div className="mb-8">
+              <h2 className="text-lg font-bold text-brand-dark">
+                Pending Approval <span className="font-normal text-brand-dark/40">({pendingProfiles.length})</span>
+              </h2>
+              <p className="mt-1 text-xs text-brand-dark/60">
+                New sign-ins land here until approved — they can&apos;t use the app yet. Assign properties now or after
+                approving.
+              </p>
+              <div className="mt-3 space-y-4">
+                {pendingProfiles.map((prof) => {
+                  const accessiblePropertyIds = new Set(
+                    userProperties.filter((up) => up.user_id === prof.id).map((up) => up.property_id),
+                  );
+                  return (
+                    <div key={prof.id} className="rounded-2xl bg-brand-orange/10 p-4">
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <div>
+                          <p className="font-semibold text-brand-dark">{prof.full_name ?? prof.email}</p>
+                          <p className="text-xs text-brand-dark/60">{prof.email}</p>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <form action={setUserStatus}>
+                            <input type="hidden" name="userId" value={prof.id} />
+                            <input type="hidden" name="status" value="rejected" />
+                            <button
+                              type="submit"
+                              className="rounded-full bg-white px-3 py-1.5 text-xs font-semibold text-brand-dark/70"
+                            >
+                              Reject
+                            </button>
+                          </form>
+                          <form action={setUserStatus}>
+                            <input type="hidden" name="userId" value={prof.id} />
+                            <input type="hidden" name="status" value="active" />
+                            <button
+                              type="submit"
+                              className="rounded-full bg-brand-dark px-3 py-1.5 text-xs font-semibold text-white"
+                            >
+                              Approve
+                            </button>
+                          </form>
+                        </div>
+                      </div>
+                      <div className="mt-3 flex flex-wrap gap-2">
+                        {properties.map((property) => {
+                          const hasAccess = accessiblePropertyIds.has(property.id);
+                          return (
+                            <form key={property.id} action={hasAccess ? revokePropertyAccess : grantPropertyAccess}>
+                              <input type="hidden" name="userId" value={prof.id} />
+                              <input type="hidden" name="propertyId" value={property.id} />
+                              <button
+                                type="submit"
+                                className={[PILL_CLASS, hasAccess ? PILL_ACTIVE : PILL_INACTIVE].join(" ")}
+                              >
+                                {property.code}
+                              </button>
+                            </form>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          ) : null}
+
           <h2 className="text-lg font-bold text-brand-dark">
-            Users &amp; Property Access <span className="font-normal text-brand-dark/40">({profiles.length})</span>
+            Users &amp; Property Access <span className="font-normal text-brand-dark/40">({activeProfiles.length})</span>
           </h2>
           <div className="mt-3 space-y-4">
-            {profiles.map((prof) => {
+            {activeProfiles.map((prof) => {
               const accessiblePropertyIds = new Set(
                 userProperties.filter((up) => up.user_id === prof.id).map((up) => up.property_id),
               );
@@ -555,13 +654,25 @@ export default async function AdminPage() {
                       <p className="font-semibold text-brand-dark">{prof.full_name ?? prof.email}</p>
                       <p className="text-xs text-brand-dark/60">{prof.email}</p>
                     </div>
-                    <form action={setUserRole} className="flex items-center gap-2">
-                      <input type="hidden" name="userId" value={prof.id} />
-                      <RoleSelect defaultValue={prof.role} />
-                      <button type="submit" className="rounded-full bg-brand-dark/10 px-3 py-1.5 text-xs font-semibold text-brand-dark">
-                        Save role
-                      </button>
-                    </form>
+                    <div className="flex items-center gap-2">
+                      <form action={setUserRole} className="flex items-center gap-2">
+                        <input type="hidden" name="userId" value={prof.id} />
+                        <RoleSelect defaultValue={prof.role} />
+                        <button type="submit" className="rounded-full bg-brand-dark/10 px-3 py-1.5 text-xs font-semibold text-brand-dark">
+                          Save role
+                        </button>
+                      </form>
+                      <form action={setUserStatus}>
+                        <input type="hidden" name="userId" value={prof.id} />
+                        <input type="hidden" name="status" value="rejected" />
+                        <button
+                          type="submit"
+                          className="rounded-full bg-white px-3 py-1.5 text-xs font-semibold text-brand-dark/70"
+                        >
+                          Suspend
+                        </button>
+                      </form>
+                    </div>
                   </div>
                   <div className="mt-3 flex flex-wrap gap-2">
                     {properties.map((property) => {
@@ -584,6 +695,40 @@ export default async function AdminPage() {
               );
             })}
           </div>
+
+          {rejectedProfiles.length > 0 ? (
+            <details className="group mt-6">
+              <summary className="flex cursor-pointer list-none items-center gap-2 marker:content-none">
+                <h2 className="text-sm font-semibold text-brand-dark/60">
+                  Rejected / Suspended <span className="font-normal text-brand-dark/40">({rejectedProfiles.length})</span>
+                </h2>
+                <ChevronDownIcon className="h-3.5 w-3.5 shrink-0 text-brand-dark/50 transition-transform group-open:rotate-180" />
+              </summary>
+              <div className="mt-3 space-y-2">
+                {rejectedProfiles.map((prof) => (
+                  <div
+                    key={prof.id}
+                    className="flex flex-wrap items-center justify-between gap-2 rounded-2xl bg-brand-dark/5 p-3"
+                  >
+                    <div>
+                      <p className="text-sm font-semibold text-brand-dark">{prof.full_name ?? prof.email}</p>
+                      <p className="text-xs text-brand-dark/60">{prof.email}</p>
+                    </div>
+                    <form action={setUserStatus}>
+                      <input type="hidden" name="userId" value={prof.id} />
+                      <input type="hidden" name="status" value="active" />
+                      <button
+                        type="submit"
+                        className="rounded-full bg-brand-dark/10 px-3 py-1.5 text-xs font-semibold text-brand-dark"
+                      >
+                        Re-approve
+                      </button>
+                    </form>
+                  </div>
+                ))}
+              </div>
+            </details>
+          ) : null}
         </section>
 
         {/* Email / SMTP */}

@@ -1,0 +1,18 @@
+-- private.resolve_issuer_display_name (0031) is called from
+-- get_my_voucher_history's plain SQL function body, not from an RLS
+-- policy's USING clause. RLS policies resolve schema-qualified function
+-- names to OIDs at CREATE POLICY time and only re-check EXECUTE at query
+-- time, which is why private.is_admin()/has_property_access() have worked
+-- inside every policy so far without this grant. A LANGUAGE SQL function
+-- body re-resolves the qualified name at call time and needs USAGE on the
+-- schema itself, not just EXECUTE on the function — pg_namespace.nspacl
+-- for 'private' is null (no grants at all beyond the owner), so
+-- get_my_voucher_history failed with "permission denied for schema
+-- private" for every authenticated caller.
+--
+-- Safe to grant broadly: the private schema holds only these narrow
+-- SECURITY DEFINER helpers (no tables), each already individually
+-- REVOKE/GRANTed per-function — schema USAGE just lets authenticated
+-- resolve the qualified name, it doesn't widen what those functions
+-- expose.
+grant usage on schema private to authenticated;

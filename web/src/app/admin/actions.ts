@@ -60,12 +60,13 @@ export async function uploadTemplate(formData: FormData) {
     return;
   }
 
-  // Cache-bust: the storage path is fixed per property (so re-uploading
-  // always overwrites the same object instead of accumulating files), but
-  // that means the public URL string never changes between uploads either
-  // — browsers just keep serving the old cached bytes at that URL. A
-  // version query param forces a fresh fetch without needing a new path.
-  const imagePath = `${supabase.storage.from("templates").getPublicUrl(storagePath).data.publicUrl}?v=${Date.now()}`;
+  // Stores the storage path, not a public URL — the templates bucket is
+  // private (migration 0030); consumers resolve a fresh signed URL at
+  // render time via lib/supabase/signedUrl.ts. No cache-busting query
+  // param needed either: every resolved signed URL is already unique
+  // (its token differs per call), so re-uploading to the same path can't
+  // serve stale cached bytes the way a fixed public URL could.
+  const imagePath = storagePath;
 
   // Merge, don't overwrite — a re-upload (swapping the photo) shouldn't
   // silently wipe out a layout Admin already adjusted in the field editor
@@ -244,11 +245,13 @@ export async function uploadApproverSignature(formData: FormData) {
     return;
   }
 
-  // Cache-bust — same fixed-path-reuse issue as uploadTemplate above.
-  const signatureUrl = `${supabase.storage.from("signatures").getPublicUrl(storagePath).data.publicUrl}?v=${Date.now()}`;
+  // Stores the storage path, not a public URL — same as uploadTemplate
+  // above (the signatures bucket is private too, migration 0030). Column
+  // is still named signature_url; consumers resolve a signed URL from it
+  // at render time via lib/supabase/signedUrl.ts.
   const { error: updateError } = await supabase
     .from("approvers")
-    .update({ signature_url: signatureUrl })
+    .update({ signature_url: storagePath })
     .eq("id", approverId);
   if (updateError) console.error("uploadApproverSignature approver update failed:", updateError.message);
 
@@ -316,11 +319,31 @@ export async function toggleApproverProperty(formData: FormData) {
 export async function setUserRole(formData: FormData) {
   const userId = String(formData.get("userId"));
   const role = String(formData.get("role"));
-  if (!["issuer", "approver", "admin"].includes(role)) return;
+  // Was missing "front_office" (added by 0015_front_office_role.sql) even
+  // though the DB constraint and RoleSelect.tsx both already allow it —
+  // this silently no-op'd any attempt to set that role. Fixed while
+  // touching this function for the pending-approval feature below.
+  if (!["issuer", "approver", "admin", "front_office"].includes(role)) return;
 
   const supabase = await createClient();
   const { error } = await supabase.from("profiles").update({ role }).eq("id", userId);
   if (error) console.error("setUserRole failed:", error.message);
+  revalidatePath("/admin");
+}
+
+// Approve/reject/re-approve/suspend a user's account, all through the same
+// setter (mirrors setUserRole's pattern above). "active" also covers
+// re-approving someone previously rejected, and can be used to suspend an
+// already-active user by setting "rejected" again — same action, different
+// starting state, no separate named actions needed.
+export async function setUserStatus(formData: FormData) {
+  const userId = String(formData.get("userId"));
+  const status = String(formData.get("status"));
+  if (!["pending", "active", "rejected"].includes(status)) return;
+
+  const supabase = await createClient();
+  const { error } = await supabase.from("profiles").update({ status }).eq("id", userId);
+  if (error) console.error("setUserStatus failed:", error.message);
   revalidatePath("/admin");
 }
 

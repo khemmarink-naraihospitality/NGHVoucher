@@ -10,6 +10,9 @@ export default async function Home() {
   if (!profile) {
     redirect("/login?next=/");
   }
+  if (profile.status !== "active") {
+    redirect("/pending");
+  }
   const previewRole = profile.role === "admin" ? await getPreviewRole() : null;
   const effectiveRole = previewRole ?? profile.role;
   if (effectiveRole === "front_office") {

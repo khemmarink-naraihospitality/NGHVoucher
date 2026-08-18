@@ -8,6 +8,7 @@ import { HistoryRowActions } from "@/components/history/HistoryRowActions";
 import { VoucherPreviewButton } from "@/components/history/VoucherPreviewButton";
 import { HistoryFilterFields } from "@/components/history/HistoryFilterFields";
 import { DownloadIcon } from "@/components/ui/DownloadIcon";
+import { ExternalLinkIcon } from "@/components/ui/ExternalLinkIcon";
 
 const STATUSES = [
   "pending_approval",
@@ -37,6 +38,8 @@ interface HistoryRow {
   revoked_reason: string | null;
   created_at: string;
   share_code: string | null;
+  issuer_name: string | null;
+  external_file_url: string | null;
 }
 
 interface PropertyOption {
@@ -70,6 +73,9 @@ export default async function HistoryPage({
   const profile = await getCurrentProfile();
   if (!profile) {
     redirect("/login?next=/history");
+  }
+  if (profile.status !== "active") {
+    redirect("/pending");
   }
   const previewRole = profile.role === "admin" ? await getPreviewRole() : null;
   const effectiveRole = previewRole ?? profile.role;
@@ -180,6 +186,7 @@ export default async function HistoryPage({
                 <tr className="border-b border-brand-dark/10 text-left text-brand-dark/60">
                   <th className="sticky left-0 z-10 bg-background py-2 pr-4">No.</th>
                   <th className="py-2 pr-4">Item Name</th>
+                  <th className="py-2 pr-4">Issuer</th>
                   <th className="py-2 pr-4">Purpose</th>
                   <th className="py-2 pr-4">Room type(s)</th>
                   <th className="py-2 pr-4">Validity Start</th>
@@ -199,6 +206,7 @@ export default async function HistoryPage({
                   <tr key={row.id} className="border-b border-brand-dark/5 text-brand-dark">
                     <td className="sticky left-0 z-10 bg-background py-2 pr-4 font-semibold">{row.running_no}</td>
                     <td className="py-2 pr-4">{row.item_name || "—"}</td>
+                    <td className="py-2 pr-4">{row.issuer_name || "—"}</td>
                     <td className="py-2 pr-4">{formatPurposeLabel(row.purpose)}</td>
                     <td className="py-2 pr-4">{row.room_type_names.join(", ")}</td>
                     <td className="py-2 pr-4">{formatVoucherDate(row.validity_start)}</td>
@@ -223,6 +231,20 @@ export default async function HistoryPage({
                           className="inline-flex h-7 w-7 items-center justify-center rounded-full bg-brand-dark/10 text-brand-dark hover:bg-brand-dark/20"
                         >
                           <DownloadIcon className="h-3.5 w-3.5" />
+                        </a>
+                      ) : row.external_file_url ? (
+                        // Migrated historical vouchers were never rendered in this
+                        // app (no exported_jpeg_path/share_code) — fall back to the
+                        // original artwork's Google Drive folder from the legacy
+                        // tracking sheet instead of showing nothing.
+                        <a
+                          href={row.external_file_url}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          title="Open original files (Google Drive)"
+                          className="inline-flex h-7 w-7 items-center justify-center rounded-full bg-brand-dark/10 text-brand-dark hover:bg-brand-dark/20"
+                        >
+                          <ExternalLinkIcon className="h-3.5 w-3.5" />
                         </a>
                       ) : (
                         "—"

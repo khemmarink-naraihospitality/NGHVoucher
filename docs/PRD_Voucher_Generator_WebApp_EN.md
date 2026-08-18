@@ -1,7 +1,7 @@
 # PRD: Dynamic Room Voucher Generator Web App
 **Product:** Lub d Room Voucher Issuing System
-**Version:** 0.8 (Draft — confirmed POC-first approach for the export engine, as recommended)
-**Status:** Draft for Review
+**Version:** 0.9 (Updated to match the shipped implementation)
+**Status:** Live — core flow built and in use; this document reflects actual behavior
 
 ---
 
@@ -13,7 +13,7 @@ Today the team (e.g. Marketing / Reservations) issues Room Vouchers to guests/in
 - No audit trail of who issued a voucher, who approved it, or when
 - No status tracking (Pending / Approved / Rejected)
 
-**Goal:** Build a web app where an Issuer fills out a form → sees a live preview instantly → sends it for approval → the Approver approves via an email link → the system generates print-quality PNG/PDF files, with running numbers and status tracked automatically.
+**Goal:** Build a web app where an Issuer fills out a form → sees a live preview instantly → sends it for approval → the Approver approves via an email link → the system generates print-quality JPEG/PDF files, with running numbers and status tracked automatically.
 
 ---
 
@@ -38,7 +38,8 @@ Today the team (e.g. Marketing / Reservations) issues Room Vouchers to guests/in
 | --- | --- | --- |
 | **Issuer** | Fills the form, views preview, sends for approval, views their own voucher history/status | Login (Google Workspace SSO recommended if the org already uses Google Workspace) |
 | **Approver** | Receives email, approves/rejects via a tokenized link, downloads files | No login required — uses a signed link that expires (e.g. 7 days) |
-| **Admin** (recommended addition) | Manages the Approver list, views all vouchers from everyone, edits/cancels vouchers, configures template/coordinates, **assigns properties to each user (a user can be assigned multiple properties)** | Login + role = admin |
+| **Front Office** (added post-launch, not in the original mockup) | Looks up approved/claimed vouchers for guests at check-in, marks a voucher `claimed` and records `claim_by` / `reservation_no`, can preview (watermarked, non-downloadable) the rendered voucher to compare against what the guest presents — cannot create, approve, or export vouchers | Login + role = front_office, scoped to assigned properties like Issuer |
+| **Admin** | Manages the Approver list, views all vouchers from everyone, edits/cancels vouchers, configures template/coordinates, **assigns properties to each user (a user can be assigned multiple properties)** | Login + role = admin |
 
 > ✅ **Confirmed:** One approver per request (no multi-level approval) — matches the single "Send for Approval" dropdown in the mockup
 
@@ -55,9 +56,9 @@ Today the team (e.g. Marketing / Reservations) issues Room Vouchers to guests/in
 5. The system:
    - Saves a record with status `pending_approval` and **reserves the running number(s) in advance** (see 6.4 on concurrency)
    - Generates and stores a preview image (so the approver can view it without re-rendering)
-   - Sends an email to the Approver via Resend with a signed URL link
+   - Sends an email to the Approver via Gmail/Google Workspace SMTP (revised from Resend, see section 10) with a signed URL link
 6. Approver opens the link (no login) → sees a read-only preview page + Approve / Reject buttons
-7. If **Approved** → adds a signature/approval date onto the voucher → renders the real files (PNG + PDF) → status changes to `approved` → immediately downloadable + (optionally) emails the Issuer that it's been approved with the file attached/linked
+7. If **Approved** → adds a signature/approval date onto the voucher → renders the real files (JPEG + PDF) → status changes to `approved` (directly claimable — see section 7 for why there's no separate `claimable` status) → immediately downloadable via a private, unguessable short link (`/v/{share_code}`) + emails the Issuer that it's been approved with the link
 8. If **Rejected** → enters a reason (text) → status changes to `rejected` → notifies the Issuer by email → **returns the reserved running number back into the pool** (see 6.4)
 9. Issuer visits the "History" page to see the status of every voucher ever issued, searchable/filterable by status or date range
 
@@ -68,9 +69,9 @@ Today the team (e.g. Marketing / Reservations) issues Room Vouchers to guests/in
 | Field | Type | Options / Validation | Notes |
 | --- | --- | --- | --- |
 | Running No. (Last / Current) | Read-only, auto | Format: `{2-digit BE year}/{Property Code}{3-digit running number}`, e.g. `26/LDCH099` | ⚠️ Real data shows the "Lub d Koh Samui" property used code `SAMUI`, not following the `LD`+abbreviation pattern (e.g. `26/SAMUI004`) — needed to confirm whether to enforce one format across all properties or let Admin set a prefix per property |
-| Room Type | Multi-select (checkbox), required, min 1 | ⚠️ **Updated from real data:** the Google Sheet shows a single voucher can select more than one room type (e.g. "The Compact, The Duo") — not a single dropdown as in the original mockup. Changed to multi-select, stored as an array | Pulled from a master list managed in the Admin page — the sheet shows many property-specific room types (e.g. Koh Tao has "Coconut Hideaway", "Tanote Bay Suite", etc.), so the master list needs to be split per property |
-| Number of Nights | Stepper (+/-), min 1 | Integer, has a min/max (e.g. 1–14) | Max value still needs to be confirmed |
-| Number of Vouchers | Stepper (+/-), min 1 | Can issue multiple vouchers per batch — 1 submission = N sequential running numbers generated | Major impact on the running-number logic (see 6.4) |
+| Room Type | Multi-select (checkbox), required, min 1, **max 3** | ✅ **Confirmed:** capped at 3 room types per voucher, enforced both client-side and server-side (`MAX_ROOM_TYPES` in `src/lib/voucher/types.ts`) so the line always fits the printed template | Pulled from a per-property master list (`room_types` table) managed in the Admin page, which supports inline add/rename/deactivate — as originally proposed |
+| Number of Nights | Stepper (+/-), min 1 | Integer, no fixed max in the shipped implementation | — |
+| Number of Vouchers | Stepper (+/-), min 1, **max 50** | ✅ **Confirmed:** capped at 50 per submission. Can issue multiple vouchers per batch — 1 submission = N sequential running numbers generated | Major impact on the running-number logic (see 6.4) |
 | Breakfast Option | ⚠️ **Updated from real data:** boolean toggle (TRUE/FALSE) | required | UI still displays "Included/Not Included" for clarity, but stored in the DB as a boolean, matching the existing data |
 | Validity | Date range picker | Start ≤ End, should not be earlier than today | Calendar highlights the selected range as in the mockup |
 | Blackout Date | Radio: Default / Custom | Default = standard text ("Weekend and Public Holiday...") / Custom = free text | Custom text needs a character limit to avoid overflowing the template (see 6.2) |
@@ -86,9 +87,10 @@ The Google Sheet currently used for tracking has columns that don't appear in th
 | --- | --- | --- |
 | **Item Name** | Campaign/batch name for the voucher, e.g. "GoxSomeday (KOLs)", "Classical Service Staff Party 2026" — one Item Name is usually tied to multiple vouchers (a batch) | Add as a "Campaign / Batch Name" field on the form, used to group multiple vouchers issued together when viewing/searching |
 | **Purpose** | Category: `KOL`, `Partner Compliment`, `Staff Party`, `etc. Compliment` | Add as a required dropdown on the form |
-| **Claim by** | Free text stating who is claiming/where to claim (e.g. "Contact Lub d Bangkok Chinatown", "Guest Experience Leader Chinatown") | Add as a supplementary field, filled in when status changes to Claimed |
-| **File** | Reference filename/link (currently appears to reference a Google Drive folder name) | In the new system this should be automatically replaced by `exported_png_url` / `exported_pdf_url` — no manual entry needed |
-| **Additional statuses** | Besides Claimable/Claimed found in real data, the sheet's legend also lists `Expired` and `Revoked` | Need to add these 2 statuses to the DB enum (see section 8) — **needed to confirm the conditions**: when Expired triggers automatically (e.g. past Validity End Date while still Claimable) and who can trigger Revoked |
+| **Claim by** | Free text stating who is claiming/where to claim (e.g. "Contact Lub d Bangkok Chinatown", "Guest Experience Leader Chinatown") | ✅ **Shipped:** `claim_by`, filled in by Front Office (see section 3) when status changes to `claimed`, via `claim_voucher(voucher_id, claim_by, reservation_no)` |
+| **Reservation No.** (not in the original sheet, added during build) | Free text, optional | ✅ **Shipped:** `reservation_no`, captured at the same time as `claim_by` — links the voucher to the guest's actual hotel reservation record for front-desk reference |
+| **File** | Reference filename/link (currently appears to reference a Google Drive folder name) | ✅ **Shipped, different from proposal:** not a stored URL — `exported_jpeg_path` / `exported_pdf_path` hold private Storage paths, resolved to short-lived signed URLs on demand, or accessed by anyone with the link via the public but unguessable `/v/{share_code}` route |
+| **Additional statuses** | Besides Claimable/Claimed found in real data, the sheet's legend also lists `Expired` and `Revoked` | ✅ **Shipped, see section 7 for the resolved design:** `expired` and `revoked` both exist in the status enum; `claimable` as a distinct status does not — see section 7 |
 
 ---
 
@@ -117,14 +119,14 @@ Use **HTML5 Canvas** to draw the base image (a voucher background pre-designed b
 
 ### 6.3 Preview vs Export
 - **Preview** (real-time): render on `<canvas>` client-side with JS directly — fast, no server load
-- **High-quality export (PNG/PDF for print):** recommend rendering **server-side** (not client-side `html2canvas`) in order to:
-  - Guarantee resolution control (300 DPI) regardless of the user's browser/device
+- **High-quality export (JPEG/PDF for print):** rendered **server-side** (not client-side `html2canvas`) in order to:
+  - Guarantee resolution control regardless of the user's browser/device
   - Prevent file tampering (if rendered client-side and uploaded, a user could alter values in DevTools before export)
-  - Suitable Node-side libraries: `node-canvas` (for drawing) + `pdf-lib` or `puppeteer` (for converting/composing into PDF) — needs testing for cold-start time on Vercel Serverless, since `node-canvas` has a native dependency that sometimes causes issues with serverless runtimes (should verify it actually deploys on Vercel before locking in the architecture — not 100% confirmed, recommend a spike/POC first)
+  - Node-side libraries used: `node-canvas` (for drawing) + `pdf-lib` (`embedJpg`, for composing into PDF)
 
-> ✅ **Confirmed:** Proceeding as recommended — start with a small POC testing whether `node-canvas` actually deploys on Vercel Serverless Functions (since there are cases of native binding compilation failing in some environments). If issues are found, fall back to the recommended alternatives: Vercel's Satori/`@vercel/og` (image generation), or run rendering on a Supabase Edge Function/Cloudflare Worker instead — this POC is in the Week 1 milestone (see section 13)
+> ✅ **Confirmed, shipped:** `node-canvas` deploys and runs fine on Vercel (Node.js runtime, not Edge — export routes set `export const runtime = "nodejs"`). No fallback to Satori/`@vercel/og` was needed.
 
-> ✅ **Confirmed (revised from CMYK):** Use **RGB** for both PNG and PDF export — no need to convert to CMYK, which simplifies the export pipeline and removes the need for an ICC color profile or additional color-conversion library. The color seen in the preview will match the exported file.
+> ✅ **Confirmed (revised from PNG):** the canvas is rendered once and encoded to **JPEG at quality 80** (`EXPORT_JPEG_QUALITY` in `src/lib/voucher/export.ts`), used both as the downloadable image and embedded directly into the PDF via `pdf-lib`'s `embedJpg` (which keeps the JPEG bytes as-is, unlike `embedPng`'s decode-and-reflate). This was chosen after generating and visually comparing real output at multiple quality levels (60/70/80/92) — quality 80 cut per-voucher storage from ~3.6MB to ~767KB with no visible quality loss, which matters materially given Supabase's free-tier storage limit (see section 9). **RGB** color throughout, no CMYK conversion.
 
 ### 6.4 Running Number — Concurrency & Multi-Voucher Issue
 The most critical issue for this system is that **running numbers must never duplicate**, even if 2 people issue vouchers at the same time:
@@ -137,10 +139,13 @@ The most critical issue for this system is that **running numbers must never dup
 
 ## 7. Approval System & Email
 
-- **Resend** sends an email to the Approver with a signed link (e.g. a JWT or HMAC token bound to `voucher_id` + expiry)
+- Gmail/Google Workspace SMTP (revised from Resend, see section 10) sends an email to the Approver with a signed link (a DB-generated token bound to `voucher_id` + expiry)
 - The link must **expire** (recommend 7 days) and be usable for a single action only (prevents double-approval / use after expiry)
 - The Approve/Reject page for the Approver must be a public route, but the token must be verified server-side every time — **never trust any value sent from the client without checking against the DB**
-- Status flow: `pending_approval` → `approved` → `claimable` → `claimed` | `rejected` | `expired` (auto, once past the Validity End Date) | `revoked` (manual, always requires a reason — see section 11)
+- Status flow: `pending_approval` → `approved` → `claimed` | `rejected` | `expired` (auto, once past the Validity End Date) | `revoked` (manual, always requires a reason — see section 11)
+
+> ✅ **Confirmed, resolved from earlier draft:** `claimable` as a separate status was dropped during implementation — `approved` already means the file exists and is immediately downloadable/claimable, so an intermediate `claimable` state added nothing distinguishable. The DB status enum (section 8) does not include it. A voucher moves `approved` → `claimed` directly when Front Office claims it (recording `claim_by`/`reservation_no`), or `approved` → `expired`/`revoked` if neither happens first.
+- The **downloadable file itself is also status-gated**, not just the DB row: the `/v/{share_code}` short link (see 6.3/9) checks status server-side on every request and stops serving the JPEG/PDF once a voucher is `claimed`, `revoked`, or `expired` — so a link that was shared before claiming can't be used to re-download after the fact.
 
 ---
 
@@ -164,8 +169,8 @@ vouchers (
   running_no text unique not null,       -- e.g. "26/LDCH099" (⚠️ format varies per property today, see section 5)
   item_name text,                        -- Campaign/batch name, e.g. "GoxSomeday (KOLs)" — new field found in real data
   purpose text check (purpose in ('kol','partner_compliment','staff_party','etc_compliment')), -- new field found in real data
-  property_id uuid references properties,
-  room_type_ids uuid[] not null,         -- ⚠️ changed to array — real data shows multiple room types per voucher
+  property_id bigint references properties, -- ✅ Shipped as bigint identity, not uuid — properties/room_types/approvers all use bigint identity ids; only vouchers/profiles use uuid
+  room_type_ids bigint[] not null,       -- ⚠️ changed to array — real data shows multiple room types per voucher; capped at 3 (see section 5)
   nights int not null,
   breakfast_included boolean not null,   -- ⚠️ changed to boolean per real data (was an enum in v0.2)
   blackout_type text check (blackout_type in ('default','custom')),
@@ -173,22 +178,31 @@ vouchers (
   validity_start date not null,
   validity_end date not null,
   note text,                             -- maps to "Remark" in the existing sheet
-  claim_by text,                         -- new field found in real data, e.g. "Contact Lub d Bangkok Chinatown"
-  issuer_id uuid references users,       -- maps to "Requested By"
-  approver_id uuid references users,     -- maps to "Approved By" (⚠️ existing sheet mixes names/emails — needs normalization on migration)
-  status text check (status in ('pending_approval','approved','claimable','claimed','rejected','expired','revoked')) default 'pending_approval', -- ⚠️ expanded: real data/legend shows expired and revoked in addition to claimable/claimed
+  issuer_id uuid references profiles,    -- maps to "Requested By"
+  approver_id bigint references approvers, -- maps to "Approved By" — ✅ shipped as a *separate* approvers table (id, name, email, is_active), not a login-capable user account; see approver_properties below for the property-scoping join
+  claim_by text,                         -- ✅ Shipped: filled in by Front Office at claim time
+  reservation_no text,                   -- ✅ Shipped, new field not in the original mockup: captured alongside claim_by, links to the guest's hotel reservation
+  status text check (status in ('pending_approval','approved','claimed','rejected','expired','revoked')) default 'pending_approval', -- ✅ Shipped without a separate 'claimable' status — 'approved' is directly claimable (see section 7); the DB check constraint still lists 'claimable' as a historical artifact but no code path ever sets it
   approval_token text,
   approval_token_expires_at timestamptz,
   approved_at timestamptz,
   rejected_reason text,
-  expired_at timestamptz,                -- ✅ Confirmed: set automatically by a scheduled job once past validity_end while still 'claimable'
+  expired_at timestamptz,                -- ✅ Confirmed: set automatically by a daily cron job (api/cron/expire-vouchers) once past validity_end while still 'approved'
   revoked_at timestamptz,                -- ✅ Confirmed: manual action only, any account with permission
-  revoked_by uuid references users,
+  revoked_by uuid references profiles,
   revoked_reason text,                   -- ✅ Confirmed: required whenever a voucher is revoked
-  exported_png_url text,
-  exported_pdf_url text,
+  exported_jpeg_path text,               -- ✅ Shipped as 'path', not 'url': a private Storage object path, not a public URL — renamed from an earlier exported_png_url once export switched from PNG to JPEG
+  exported_pdf_path text,
+  share_code text unique,                -- ✅ Shipped, not in the original design: short random token powering the public but unguessable /v/{share_code} download link, generated at approval time
   created_at timestamptz default now()
 )
+
+-- approvers (✅ shipped as a lightweight standalone entity — no login, receives email + approves via a
+-- tokenized link only, so it doesn't need an auth.users/profiles row of its own)
+approvers (id, name, email, is_active)
+
+-- approver_properties (mapping for which properties each approver can act on, same shape as user_properties)
+approver_properties (approver_id, property_id)
 
 -- running_number_counters
 running_number_counters (property_id, year, last_number int)
@@ -201,10 +215,10 @@ running_number_counters (property_id, year, last_number int)
 | Category | Requirement |
 | --- | --- |
 | **Performance** | Preview updates < 300ms after typing/changing a value; real file export < 3 seconds (revised from the original "under 1 second" target, since server-side rendering + PDF composition typically takes longer than client-side canvas — expectations need to be set accordingly) |
-| **Cost** | Target $0/month in the MVP phase using free tiers: Supabase (500MB DB, 1GB storage), Vercel Hobby, Resend (3,000 emails/month) — **usage must be monitored** since exceeding the free tier incurs immediate cost |
-| **Security** | Signed links have an expiry; RLS (Row Level Security) on Supabase prevents an Issuer from seeing other people's vouchers; no sensitive data stored in URL query strings |
+| **Cost** | Target $0/month in the MVP phase using free tiers: Supabase (500MB DB, 1GB storage), Vercel Hobby, Gmail/Google Workspace SMTP for outbound email (not Resend, see section 10) — **usage must be monitored** since exceeding the free tier incurs immediate cost. JPEG quality 80 (~767KB/voucher) was chosen specifically to stretch Supabase's free 1GB Storage tier further than the original PNG output (~3.6MB/voucher) would allow |
+| **Security** | Storage is private end-to-end: `vouchers`/`templates`/`signatures` buckets have no public or anon/authenticated read access at all — every file is served via a fresh, server-generated signed URL or the unguessable `/v/{share_code}` route, never a stored public URL. RLS (Row Level Security) on Supabase scopes every table to the caller's assigned properties (or admin); the approver flow authorizes via `approval_token` possession, checked server-side, not a stored public link |
 | **Availability** | No formal SLA in phase 1 (running on free tiers, which don't guarantee uptime) |
-| **Export Format** | ✅ **Confirmed:** always export both PNG and PDF (not either/or), with **RGB** as the standard color mode at 300 DPI |
+| **Export Format** | ✅ **Confirmed (revised from PNG):** always export both **JPEG (quality 80)** and PDF (not either/or), with **RGB** as the standard color mode — see section 6.3 for why JPEG replaced PNG |
 | **Browser Support** | Latest Chrome/Edge/Safari — no need to support IE |
 | **Localization** | ✅ **Confirmed:** primarily English per the current mockup (no need to support Thai on the voucher in this phase) |
 
@@ -216,9 +230,9 @@ running_number_counters (property_id, year, last_number int)
 | --- | --- | --- |
 | Frontend | Next.js (React) | Chosen because it supports both client-side canvas (preview) and server routes (export) in a single project |
 | Canvas Preview | HTML5 Canvas API directly (not relying on `html2canvas` for the real file) | `html2canvas` is good for a fast preview but not recommended as the official output file |
-| Export Engine | Server-side render (Node canvas / `@vercel/og` / Puppeteer) — **POC required before locking in** | See section 6.3 |
+| Export Engine | Server-side render — `node-canvas` + `pdf-lib` | ✅ Shipped as originally proposed; see section 6.3 |
 | Backend & DB | Supabase (Postgres + Auth + Storage) | RLS helps with data isolation between Issuers |
-| Email | Resend | Free tier of 3,000 emails/month is sufficient for the MVP |
+| Email | ✅ **Shipped, revised from Resend:** Gmail/Google Workspace SMTP directly (`nodemailer`), configurable per-org via env vars or the Admin → Email panel | Avoids a third-party ESP dependency/account; see `src/lib/email/mailer.ts` |
 | Hosting | Vercel | Fully supports Next.js, but must check the serverless function timeout limit (Hobby plan = 10s) is enough for the export process |
 
 ---
@@ -230,8 +244,11 @@ running_number_counters (property_id, year, last_number int)
 2. ✅ Running numbers reset to 001 every year, prefixed with the 2-digit BE year — e.g. `26/LDCH001` → `27/LDCH001`
 3. ✅ When Rejected, the running number returns to the pool for reuse, but the Log/History still records that it was rejected
 4. ✅ Multi-property support from the start — Admin assigns which users can see which properties (a user can be assigned multiple properties), with running numbers and files still running independently per property, never combined
-5. ✅ Always export both PNG and PDF, with RGB as the standard color at 300 DPI
+5. ✅ Always export both JPEG (quality 80, revised from PNG) and PDF, with RGB as the standard color
 6. ✅ Primarily English, no need to support Thai on the voucher in this phase
+7. ✅ Room Type capped at 3 selections per voucher; Number of Vouchers capped at 50 per submission
+8. ✅ No separate `claimable` status — `approved` is directly claimable; the download link is status-gated server-side instead (stops serving the file once `claimed`/`revoked`/`expired`)
+9. ✅ A fourth role, Front Office, was added post-launch to handle claim-time lookups at check-in (not in the original 3-role mockup)
 
 **Still to discuss:**
 1. Does the system need to track actual on-site "redemption" (e.g. QR code, scan to mark as used)? If needed, this is additional scope not in the current mockup
@@ -252,7 +269,7 @@ running_number_counters (property_id, year, last_number int)
 3. Normalize `Approved By` / `Requested By` to link to `users.id` — need to create user records in the new system matching the names/emails found in the sheet (e.g. "Parika Kirdjongrak", "Oliver lan Council", "parika.k@marasca.live")
 4. Preserve all existing running numbers exactly as-is (import as they are, no revising/remapping the old prefix — ✅ Confirmed), then have the new system's counter continue from the highest existing number per property/year, with new numbers issued after go-live using the prefix confirmed in section 11 (e.g. Koh Samui moving from the old `SAMUI` to `LDSM` for new vouchers)
 5. Pre-create property records for Siem Reap and Manila Makati (no voucher data yet, but they need to be set up in advance with prefix codes `LDSR`/`LDMK`)
-6. Set up a scheduled job to auto-expire vouchers that have passed the Validity End Date while still `claimable`
+6. Set up a scheduled job to auto-expire vouchers that have passed the Validity End Date while still `approved` (shipped as `api/cron/expire-vouchers`, daily Vercel Cron)
 
 **Confirmed After Reviewing the Actual File:**
 1. ✅ **Property Prefix:** Admin can set the prefix themselves per property, but use this set as the default to start — `LDBS` (Bangkok Siam, code unchanged), `LDCH` (Bangkok Chinatown), `LDPT` (Phuket Patong), `LDKT` (Koh Tao), `LDSM` (Koh Samui, changed from the old `SAMUI`), `LDMK` (Manila Makati), `LDSR` (Siem Reap) — ✅ Confirmed: **existing running numbers already issued will NOT be revised/remapped** — all historical numbers are preserved exactly as they are (Koh Samui's old numbers under `SAMUI` will remain that way in history; new numbers issued after go-live will use `LDSM`)
@@ -268,5 +285,5 @@ running_number_counters (property_id, year, last_number int)
 1. **Week 1:** Set up the project (Next.js + Supabase + Vercel), design the DB schema (including `user_properties` for multi-property), do a POC for server-side rendering one voucher first (de-risk section 6.3)
 2. **Week 2:** Build the form + client-side Canvas live preview matching the mockup, build the Admin page for assigning properties to users
 3. **Week 3:** Running number system (concurrency-safe, annual reset) + save/submit flow + email approval system
-4. **Week 4:** Approver page (approve/reject), real file export (PNG/PDF RGB), History page for the Issuer
+4. **Week 4:** Approver page (approve/reject), real file export (JPEG/PDF RGB), History page for the Issuer
 5. **Week 5:** QA around unusually long text/edge cases, concurrency testing, evaluate the existing Google Sheet for migration, go live

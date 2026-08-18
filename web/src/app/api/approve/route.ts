@@ -1,6 +1,7 @@
 import { randomBytes } from "node:crypto";
 import { createClient } from "@/lib/supabase/server";
 import { createServiceRoleClient } from "@/lib/supabase/serviceRole";
+import { resolveStorageImageUrl } from "@/lib/supabase/signedUrl";
 import { sendMail } from "@/lib/email/mailer";
 import { renderIssuerApprovedEmail } from "@/lib/email/issuerNotificationEmail";
 import { buildTemplateConfig, type TemplateConfigJson } from "@/lib/templates/config";
@@ -105,8 +106,19 @@ export async function POST(request: Request) {
     }
 
     try {
+      // Short TTL — this render happens once, immediately, within this
+      // same request; not the generous hour-long TTL used where these
+      // images sit in a page a user might browse for a while (admin
+      // panel, create-voucher workspace, the approve page itself).
+      const RENDER_IMAGE_TTL_SECONDS = 60;
+      const [resolvedImagePath, resolvedSignatureUrl] = await Promise.all([
+        resolveStorageImageUrl("templates", template.imagePath, RENDER_IMAGE_TTL_SECONDS),
+        resolveStorageImageUrl("signatures", row.approver_signature_url, RENDER_IMAGE_TTL_SECONDS),
+      ]);
+      const resolvedTemplate = { ...template, imagePath: resolvedImagePath ?? template.imagePath };
+
       const { jpeg, pdf } = await renderVoucherFiles(
-        template,
+        resolvedTemplate,
         {
           runningNo: row.running_no,
           roomTypeNightsLabel: formatRoomTypeNights(row.room_type_names, row.nights),
@@ -116,7 +128,7 @@ export async function POST(request: Request) {
           approverPosition: row.approver_position ?? undefined,
           approvedDateLabel: row.approved_at ? formatVoucherDate(row.approved_at.slice(0, 10)) : undefined,
         },
-        row.approver_signature_url ?? undefined,
+        resolvedSignatureUrl ?? undefined,
       );
 
       const safeName = row.running_no.replace("/", "-");
