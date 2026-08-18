@@ -5,6 +5,7 @@ import { createClient } from "@/lib/supabase/server";
 import { getCurrentProfile } from "@/lib/auth/profile";
 import { getPreviewRole } from "@/lib/auth/previewRole";
 import { resolveStorageImageUrl } from "@/lib/supabase/signedUrl";
+import { formatRunningNo } from "@/lib/voucher/format";
 import {
   APPROVAL_EMAIL_PLACEHOLDERS,
   DEFAULT_APPROVAL_EMAIL_TEMPLATE,
@@ -128,11 +129,23 @@ function buildIssuerRejectedEmailPreview(template: EmailTemplate) {
 }
 
 const SECTION_NAV = [
+  { href: "#dashboard", label: "Dashboard" },
   { href: "#properties", label: "Properties" },
   { href: "#approvers", label: "Approvers" },
   { href: "#users", label: "Users" },
   { href: "#email", label: "Email" },
 ];
+
+const VOUCHER_STATUSES = ["pending_approval", "approved", "claimed", "rejected", "expired", "revoked"] as const;
+
+// Supabase's combined free-tier Storage cap (PRD §9) — shown as a rough
+// budget indicator, not an exact billing figure.
+const STORAGE_FREE_TIER_BYTES = 1024 * 1024 * 1024;
+
+function formatBytes(bytes: number): string {
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(0)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
 
 export default async function AdminPage() {
   const profile = await getCurrentProfile();
@@ -148,6 +161,7 @@ export default async function AdminPage() {
   const previewRole = await getPreviewRole();
 
   const supabase = await createClient();
+  const currentYear = new Date().getFullYear();
   const [
     propertiesRes,
     roomTypesRes,
@@ -155,6 +169,9 @@ export default async function AdminPage() {
     approverPropertiesRes,
     profilesRes,
     userPropertiesRes,
+    voucherStatusRes,
+    runningNumberCountersRes,
+    storageStatsRes,
     emailSettingsRes,
   ] = await Promise.all([
     supabase.from("properties").select("id, code, name, template_config").order("code"),
@@ -163,6 +180,9 @@ export default async function AdminPage() {
     supabase.from("approver_properties").select("approver_id, property_id"),
     supabase.from("profiles").select("id, email, full_name, role, status").order("email"),
     supabase.from("user_properties").select("user_id, property_id"),
+    supabase.from("vouchers").select("status"),
+    supabase.from("running_number_counters").select("property_id, last_number").eq("year", currentYear),
+    supabase.rpc("get_storage_stats"),
     supabase
       .from("email_settings")
       .select(
@@ -217,6 +237,25 @@ export default async function AdminPage() {
   const activeProfiles = profiles.filter((p) => p.status === "active");
   const rejectedProfiles = profiles.filter((p) => p.status === "rejected");
   const userProperties = (userPropertiesRes.data as UserPropertyRow[] | null) ?? [];
+
+  const voucherStatusRows = (voucherStatusRes.data as { status: string }[] | null) ?? [];
+  const voucherStatusCounts = voucherStatusRows.reduce<Record<string, number>>((acc, row) => {
+    acc[row.status] = (acc[row.status] ?? 0) + 1;
+    return acc;
+  }, {});
+  const totalVoucherCount = voucherStatusRows.length;
+
+  const lastNumberByPropertyId = new Map<number, number>(
+    ((runningNumberCountersRes.data as { property_id: number; last_number: number }[] | null) ?? []).map((row) => [
+      row.property_id,
+      row.last_number,
+    ]),
+  );
+
+  const storageStats = (storageStatsRes.data as { bucket_id: string; object_count: number; total_bytes: number }[] | null) ?? [];
+  const storageTotalBytes = storageStats.reduce((sum, row) => sum + row.total_bytes, 0);
+  const storageTotalObjects = storageStats.reduce((sum, row) => sum + row.object_count, 0);
+
   // The real app password never enters JSX/props below — only this
   // derived boolean does. gmail_user/gmail_from_name aren't secret and are
   // shown as-is (same posture as every other admin text field on this page).
@@ -290,6 +329,74 @@ export default async function AdminPage() {
       </nav>
 
       <div className="mx-auto w-full max-w-5xl space-y-10 px-4 py-10">
+        {/* Dashboard */}
+        <section id="dashboard">
+          <h2 className="text-lg font-bold text-brand-dark">Dashboard</h2>
+
+          <div className="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
+            <div className="rounded-2xl bg-brand-lime/30 p-4">
+              <p className="text-2xl font-bold text-brand-dark">{totalVoucherCount}</p>
+              <p className="text-xs text-brand-dark/60">Total vouchers</p>
+            </div>
+            {VOUCHER_STATUSES.map((status) => (
+              <div key={status} className="rounded-2xl bg-brand-lime/30 p-4">
+                <p className="text-2xl font-bold text-brand-dark">{voucherStatusCounts[status] ?? 0}</p>
+                <p className="text-xs capitalize text-brand-dark/60">{status.replace("_", " ")}</p>
+              </div>
+            ))}
+          </div>
+
+          <div className="mt-4 grid grid-cols-1 gap-4 lg:grid-cols-2">
+            <div className="rounded-2xl bg-brand-lime/20 p-4">
+              <p className="text-xs font-semibold uppercase tracking-wide text-brand-dark/50">
+                Latest running number ({currentYear})
+              </p>
+              <div className="mt-2 space-y-1.5">
+                {properties.map((p) => {
+                  const lastNumber = lastNumberByPropertyId.get(p.id);
+                  return (
+                    <div key={p.id} className="flex items-center justify-between text-sm">
+                      <span className="text-brand-dark/70">{p.code}</span>
+                      <span className="font-mono font-semibold text-brand-dark">
+                        {lastNumber ? formatRunningNo(p.code, lastNumber) : "— none issued yet"}
+                      </span>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+
+            <div className="rounded-2xl bg-brand-lime/20 p-4">
+              <div className="flex items-center justify-between">
+                <p className="text-xs font-semibold uppercase tracking-wide text-brand-dark/50">
+                  Storage ({storageTotalObjects} files)
+                </p>
+                <p className="text-sm font-semibold text-brand-dark">
+                  {formatBytes(storageTotalBytes)} / {formatBytes(STORAGE_FREE_TIER_BYTES)}
+                </p>
+              </div>
+              <div className="mt-2 h-2 overflow-hidden rounded-full bg-white/70">
+                <div
+                  className="h-full rounded-full bg-brand-orange"
+                  style={{
+                    width: `${Math.min(100, (storageTotalBytes / STORAGE_FREE_TIER_BYTES) * 100).toFixed(1)}%`,
+                  }}
+                />
+              </div>
+              <div className="mt-3 space-y-1.5">
+                {storageStats.map((row) => (
+                  <div key={row.bucket_id} className="flex items-center justify-between text-sm">
+                    <span className="text-brand-dark/70">
+                      {row.bucket_id} <span className="text-brand-dark/40">({row.object_count})</span>
+                    </span>
+                    <span className="font-semibold text-brand-dark">{formatBytes(row.total_bytes)}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+        </section>
+
         {/* Properties (incl. room types) */}
         <section id="properties">
           <h2 className="text-lg font-bold text-brand-dark">
