@@ -4,5 +4,6 @@
       "path": "/api/cron/expire-vouchers",
       "schedule": "0 1 * * *"
     }
-  ]
+  ],
+  "regions": ["sin1"]
 }
