@@ -3,6 +3,10 @@
     {
       "path": "/api/cron/expire-vouchers",
       "schedule": "0 1 * * *"
+    },
+    {
+      "path": "/api/cron/monthly-backup",
+      "schedule": "0 2 1 * *"
     }
   ],
   "regions": ["sin1"]

@@ -18,11 +18,19 @@ import { createServiceRoleClient } from "@/lib/supabase/serviceRole";
 // to confirm the .env.local fallback credentials actually work, or use
 // the "Send test email" button in Admin for DB-configured ones.
 
+export interface SendMailAttachment {
+  filename: string;
+  content: Buffer;
+  contentType?: string;
+}
+
 export interface SendMailInput {
   to: string;
   subject: string;
   html: string;
   text: string;
+  /** Currently only used by the monthly DB-backup cron (api/cron/monthly-backup). */
+  attachments?: SendMailAttachment[];
 }
 
 export interface SendMailResult {
@@ -123,6 +131,7 @@ export async function sendMail(input: SendMailInput): Promise<SendMailResult> {
       subject: input.subject,
       text: input.text,
       html: input.html,
+      attachments: input.attachments,
     });
     return { sent: true };
   } catch (error) {

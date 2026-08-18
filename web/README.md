@@ -42,10 +42,13 @@ Notable ones:
   verify with `npm run email:test -- you@example.com`. These can also be
   set from the Admin → Email panel instead, which takes priority over the
   env vars at send time.
-- `CRON_SECRET` — authorizes Vercel Cron's daily call to
-  `/api/cron/expire-vouchers`. Must also be set as a Vercel project env
-  var (Vercel sends it automatically as `Authorization: Bearer
-  $CRON_SECRET` once configured there — nothing else to wire up).
+- `CRON_SECRET` — authorizes Vercel Cron's calls to `/api/cron/expire-vouchers`
+  (daily) and `/api/cron/monthly-backup` (monthly). Must also be set as a
+  Vercel project env var (Vercel sends it automatically as `Authorization:
+  Bearer $CRON_SECRET` once configured there — nothing else to wire up).
+- `BACKUP_EMAIL_TO` — where the monthly DB backup gets emailed
+  (`api/cron/monthly-backup`, a zipped JSON dump of every table except the
+  Gmail app password, in lieu of paying for Supabase's own backup add-on).
 
 ## Database & migrations
 
@@ -66,7 +69,8 @@ before adding one.
 ## Deploying
 
 Deploys on Vercel; `vercel.json` configures the daily `expire-vouchers`
-cron job (`0 1 * * *` UTC). The app lives in this `web/` subfolder, not the
+cron job (`0 1 * * *` UTC) and the monthly `monthly-backup` cron job
+(`0 2 1 * *` UTC). The app lives in this `web/` subfolder, not the
 repo root — when creating the Vercel project, set **Root Directory** to
 `web`. Checklist for a new environment:
 
