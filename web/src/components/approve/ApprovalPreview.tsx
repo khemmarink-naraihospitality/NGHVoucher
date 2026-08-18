@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import type { TemplateConfig } from "@/lib/templates/config";
-import { formatBlackoutText, formatRoomTypeNights, formatValidityRange, formatVoucherDate } from "@/lib/voucher/format";
+import { formatBlackoutText, formatRoomTypeNights, formatValidityRange, formatVoucherDateShort } from "@/lib/voucher/format";
 import { VoucherCanvasPreview } from "@/components/voucher/VoucherCanvasPreview";
 
 export interface ApprovalPreviewVoucher {
@@ -74,7 +74,7 @@ export function ApprovalPreview({ template, rows, approverPosition, approverSign
           approverPosition: selected.status !== "rejected" ? (approverPosition ?? undefined) : undefined,
           approvedDateLabel:
             selected.status === "approved" && selected.approved_at
-              ? formatVoucherDate(selected.approved_at.slice(0, 10))
+              ? formatVoucherDateShort(selected.approved_at.slice(0, 10))
               : undefined,
         }}
         signatureImageUrl={selected.status !== "rejected" ? (approverSignatureUrl ?? undefined) : undefined}

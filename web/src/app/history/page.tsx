@@ -180,25 +180,37 @@ export default async function HistoryPage({
         ) : rows.length === 0 ? (
           <p className="text-sm text-brand-dark/60">No vouchers match these filters.</p>
         ) : (
-          <div className="overflow-x-auto">
+          <div className="max-h-[75vh] overflow-auto rounded-2xl">
             <table className="w-full border-collapse whitespace-nowrap text-sm">
               <thead>
+                {/*
+                  Bounding this scroll container's height (instead of the old
+                  page-length overflow-x-auto) keeps both scrollbars reachable
+                  without scrolling all the way to the bottom of a long table
+                  first. Header cells go sticky top-0 to match — otherwise
+                  scrolling down inside this now-independently-scrolling
+                  region would just scroll the column labels away like any
+                  other row. The "No." header is sticky on both axes (it's
+                  also the pinned-left column below), so it needs the
+                  higher z-index to stay above the plain sticky-top headers
+                  at their shared corner.
+                */}
                 <tr className="border-b border-brand-dark/10 text-left text-brand-dark/60">
-                  <th className="sticky left-0 z-10 bg-background py-2 pr-4">No.</th>
-                  <th className="py-2 pr-4">Item Name</th>
-                  <th className="py-2 pr-4">Issuer</th>
-                  <th className="py-2 pr-4">Purpose</th>
-                  <th className="py-2 pr-4">Room type(s)</th>
-                  <th className="py-2 pr-4">Validity Start</th>
-                  <th className="py-2 pr-4">Validity End</th>
-                  <th className="py-2 pr-4">Status</th>
-                  <th className="py-2 pr-4">Claimed By</th>
-                  <th className="py-2 pr-4">Reservation No.</th>
-                  <th className="py-2 pr-4">Revoke Reason</th>
-                  <th className="py-2 pr-4">Issued</th>
-                  <th className="py-2 pr-4">Files</th>
-                  <th className="py-2 pr-4">Actions</th>
-                  <th className="py-2 pr-4">Note</th>
+                  <th className="sticky left-0 top-0 z-20 bg-background py-2 pr-4">No.</th>
+                  <th className="sticky top-0 z-10 bg-background py-2 pr-4">Item Name</th>
+                  <th className="sticky top-0 z-10 bg-background py-2 pr-4">Issuer</th>
+                  <th className="sticky top-0 z-10 bg-background py-2 pr-4">Purpose</th>
+                  <th className="sticky top-0 z-10 bg-background py-2 pr-4">Room type(s)</th>
+                  <th className="sticky top-0 z-10 bg-background py-2 pr-4">Validity Start</th>
+                  <th className="sticky top-0 z-10 bg-background py-2 pr-4">Validity End</th>
+                  <th className="sticky top-0 z-10 bg-background py-2 pr-4">Status</th>
+                  <th className="sticky top-0 z-10 bg-background py-2 pr-4">Claimed By</th>
+                  <th className="sticky top-0 z-10 bg-background py-2 pr-4">Reservation No.</th>
+                  <th className="sticky top-0 z-10 bg-background py-2 pr-4">Revoke Reason</th>
+                  <th className="sticky top-0 z-10 bg-background py-2 pr-4">Issued</th>
+                  <th className="sticky top-0 z-10 bg-background py-2 pr-4">Files</th>
+                  <th className="sticky top-0 z-10 bg-background py-2 pr-4">Actions</th>
+                  <th className="sticky top-0 z-10 bg-background py-2 pr-4">Note</th>
                 </tr>
               </thead>
               <tbody>

@@ -66,17 +66,26 @@ before adding one.
 ## Deploying
 
 Deploys on Vercel; `vercel.json` configures the daily `expire-vouchers`
-cron job (`0 1 * * *` UTC). Checklist for a new environment:
+cron job (`0 1 * * *` UTC). The app lives in this `web/` subfolder, not the
+repo root — when creating the Vercel project, set **Root Directory** to
+`web`. Checklist for a new environment:
 
 1. Set every var from `.env.local.example` as a Vercel project env var
-   (including `CRON_SECRET` — see above).
+   (including `CRON_SECRET` — see above), with `NEXT_PUBLIC_APP_URL` set
+   to the real production URL, not `localhost`.
 2. Run the Supabase migrations against that project (`supabase db push`).
 3. Confirm the Storage buckets exist and are private (`vouchers`,
    `signatures`, `templates` — created by the migrations, but worth a
    quick check in the Supabase dashboard).
-4. Log in once with an intended admin's Google account, then set that
-   `profiles` row's `role` to `admin` directly in the database (there's
-   no bootstrap UI for the very first admin).
+4. Add `<production-url>/auth/callback` to Supabase Dashboard → Authentication
+   → URL Configuration → Redirect URLs (Google's own OAuth client only
+   needs Supabase's own callback URL, which doesn't change between
+   environments — this app-side allow-list is the one that does).
+5. Log in once with a Google account — the very first sign-in against a
+   fresh database bootstraps straight to `admin` + active automatically
+   (`handle_new_user`, `supabase/migrations/0006`/`0033`). Every signup
+   after that lands `pending` until an admin approves them from
+   Admin → Users.
 
 ## Scripts
 

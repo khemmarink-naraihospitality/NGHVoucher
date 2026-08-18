@@ -10,7 +10,7 @@ import {
   formatBlackoutText,
   formatRoomTypeNights,
   formatValidityRange,
-  formatVoucherDate,
+  formatVoucherDateShort,
 } from "@/lib/voucher/format";
 
 // Approver action (PRD §4 step 7, §7): flips status -> approved via the
@@ -126,7 +126,7 @@ export async function POST(request: Request) {
           validityLabel: formatValidityRange(row.validity_start, row.validity_end),
           blackoutText: formatBlackoutText(row.blackout_text ?? ""),
           approverPosition: row.approver_position ?? undefined,
-          approvedDateLabel: row.approved_at ? formatVoucherDate(row.approved_at.slice(0, 10)) : undefined,
+          approvedDateLabel: row.approved_at ? formatVoucherDateShort(row.approved_at.slice(0, 10)) : undefined,
         },
         resolvedSignatureUrl ?? undefined,
       );

@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { buildTemplateConfig } from "@/lib/templates/config";
-import { formatBlackoutText, formatRoomTypeNights, formatValidityRange, formatVoucherDate } from "@/lib/voucher/format";
+import { formatBlackoutText, formatRoomTypeNights, formatValidityRange, formatVoucherDateShort } from "@/lib/voucher/format";
 import { VoucherCanvasPreview } from "@/components/voucher/VoucherCanvasPreview";
 import { getVoucherRenderData, type VoucherRenderData } from "@/app/history/previewActions";
 
@@ -87,7 +87,7 @@ export function VoucherPreviewButton({ voucherId, status }: VoucherPreviewButton
                   validityLabel: formatValidityRange(data.validity_start, data.validity_end),
                   blackoutText: formatBlackoutText(data.blackout_text ?? ""),
                   approverPosition: data.approver_position ?? undefined,
-                  approvedDateLabel: data.approved_at ? formatVoucherDate(data.approved_at.slice(0, 10)) : undefined,
+                  approvedDateLabel: data.approved_at ? formatVoucherDateShort(data.approved_at.slice(0, 10)) : undefined,
                 }}
                 signatureImageUrl={data.approver_signature_url ?? undefined}
                 watermark

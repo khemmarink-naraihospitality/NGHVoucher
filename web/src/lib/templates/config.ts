@@ -133,11 +133,18 @@ export const DEFAULT_FIELDS: TemplateTextField[] = [
   },
   {
     // Sits directly on the second "Approved by" blank line, above the
-    // template's own static "(Date)" caption.
+    // template's own static "(Date)" caption. minSizePct added after a real
+    // approval showed "18 August 2026" ellipsis-truncating to "18 August
+    // 20…" — this slot is much narrower (maxWidthPct 0.1) than
+    // validity_range's, so it needs to shrink-to-fit like the other
+    // free-text fields instead of just truncating at a fixed size. Paired
+    // with formatVoucherDateShort (abbreviated month) so it rarely needs to
+    // shrink much at all.
     key: "approved_date",
     xPct: 0.4116,
     yPct: 0.54,
     sizePct: 0.014,
+    minSizePct: 0.011,
     weight: 400,
     color: "#FFFFFF",
     align: "center",

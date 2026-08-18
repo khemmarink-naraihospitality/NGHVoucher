@@ -31,6 +31,18 @@ export function formatVoucherDate(isoDate: string): string {
   return d.toLocaleDateString("en-GB", { day: "numeric", month: "long", year: "numeric" });
 }
 
+// Abbreviated month specifically for the "Approved by" signature line's
+// date field — that slot is much narrower than validity_range's (which
+// legitimately has room for a full month name), so a shorter format needs
+// far less shrinking to fit (see approved_date's minSizePct in
+// templates/config.ts) and stays legible instead of truncating with "…".
+export function formatVoucherDateShort(isoDate: string): string {
+  if (!isoDate) return "";
+  const d = new Date(`${isoDate}T00:00:00`);
+  if (Number.isNaN(d.getTime())) return "";
+  return d.toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" });
+}
+
 export function formatValidityRange(start: string, end: string): string {
   const startLabel = formatVoucherDate(start);
   const endLabel = formatVoucherDate(end);
