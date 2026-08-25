@@ -89,6 +89,11 @@ export async function POST(request: Request) {
   // bypasses RLS entirely and never reaches the browser.
   const storageClient = createServiceRoleClient();
   let exportFailed = false;
+  // Populated only on a fully successful export — a voucher that failed
+  // to render/upload (no template yet, storage error, etc.) has nothing
+  // to link to in the issuer-notification email below, so it's left out
+  // and rendered as plain text there instead of a dead link.
+  const shareCodeByVoucherId = new Map<string, string>();
 
   for (const row of details as VoucherBatchRow[]) {
     const template = buildTemplateConfig(row.property_code, row.property_code, row.template_config);
@@ -159,6 +164,7 @@ export async function POST(request: Request) {
         p_pdf_path: pdfPath,
         p_share_code: shareCode,
       });
+      shareCodeByVoucherId.set(row.id, shareCode);
     } catch (err) {
       exportFailed = true;
       console.error(`Export failed for ${row.running_no}:`, err instanceof Error ? err.message : err);
@@ -173,6 +179,13 @@ export async function POST(request: Request) {
       issuerName: firstRow.issuer_name ?? firstRow.issuer_email,
       propertyName: firstRow.property_name,
       runningNumbers: (details as VoucherBatchRow[]).map((row) => row.running_no),
+      voucherLinks: (details as VoucherBatchRow[]).map((row) => {
+        const shareCode = shareCodeByVoucherId.get(row.id);
+        return {
+          runningNo: row.running_no,
+          url: shareCode ? `${process.env.NEXT_PUBLIC_APP_URL}/v/${shareCode}` : null,
+        };
+      }),
       historyUrl: `${process.env.NEXT_PUBLIC_APP_URL}/history`,
     });
     await sendMail({ to: firstRow.issuer_email, subject, html, text });

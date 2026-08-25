@@ -8,6 +8,11 @@ import type { IssuerApprovedEmailInput, IssuerRejectedEmailInput } from "@/lib/e
 // 0002): {2-digit year}/{property code}{3-digit sequence}.
 const SAMPLE_VOUCHER_NUMBERS = ["26/LDBS001", "26/LDBS002", "26/LDBS003"];
 const SAMPLE_PROPERTY_NAME = "Lub d Bangkok Siam";
+const SAMPLE_VOUCHER_LINKS = [
+  { runningNo: "26/LDBS001", url: `${process.env.NEXT_PUBLIC_APP_URL}/v/sample1code` },
+  { runningNo: "26/LDBS002", url: `${process.env.NEXT_PUBLIC_APP_URL}/v/sample2code` },
+  { runningNo: "26/LDBS003", url: `${process.env.NEXT_PUBLIC_APP_URL}/v/sample3code` },
+];
 
 export function buildSampleApprovalEmailInput(overrides: Partial<ApprovalEmailInput> = {}): ApprovalEmailInput {
   return {
@@ -30,6 +35,7 @@ export function buildSampleIssuerApprovedEmailInput(
     issuerName: "Alex Morgan",
     propertyName: SAMPLE_PROPERTY_NAME,
     runningNumbers: SAMPLE_VOUCHER_NUMBERS,
+    voucherLinks: SAMPLE_VOUCHER_LINKS,
     historyUrl: `${process.env.NEXT_PUBLIC_APP_URL}/history`,
     ...overrides,
   };

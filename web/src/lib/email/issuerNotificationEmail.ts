@@ -11,6 +11,12 @@ export interface EmailTemplate {
   text: string;
 }
 
+/** One voucher's download link — url is null when that specific voucher failed to export (approval still stands, see app/api/approve/route.ts). */
+export interface VoucherLinkEntry {
+  runningNo: string;
+  url: string | null;
+}
+
 interface IssuerNotificationBase {
   issuerName: string;
   propertyName: string;
@@ -18,7 +24,9 @@ interface IssuerNotificationBase {
   historyUrl: string;
 }
 
-export type IssuerApprovedEmailInput = IssuerNotificationBase;
+export interface IssuerApprovedEmailInput extends IssuerNotificationBase {
+  voucherLinks: VoucherLinkEntry[];
+}
 
 export interface IssuerRejectedEmailInput extends IssuerNotificationBase {
   reason: string;
@@ -33,8 +41,36 @@ function baseVars(input: IssuerNotificationBase): Record<string, string> {
   };
 }
 
-export const ISSUER_APPROVED_EMAIL_PLACEHOLDERS = ["issuerName", "propertyName", "voucherNumbers", "historyUrl"] as const;
-export const ISSUER_REJECTED_EMAIL_PLACEHOLDERS = [...ISSUER_APPROVED_EMAIL_PLACEHOLDERS, "reason"] as const;
+// One <a> per voucher, joined with <br> — a comma-separated line of links
+// reads poorly once wrapped, and each voucher having its own line makes it
+// obvious which link goes with which running number. Vouchers with no
+// export (url: null) render as plain text, not a dead link.
+function renderVoucherLinksHtml(links: VoucherLinkEntry[]): string {
+  return links
+    .map((v) =>
+      v.url
+        ? `<a href="${v.url}" style="color: #ff5a1f; text-decoration: underline;">${v.runningNo}</a>`
+        : v.runningNo,
+    )
+    .join("<br>");
+}
+
+function renderVoucherLinksText(links: VoucherLinkEntry[]): string {
+  return links.map((v) => (v.url ? `${v.runningNo} — ${v.url}` : v.runningNo)).join("\n");
+}
+
+const BASE_PLACEHOLDERS = ["issuerName", "propertyName", "voucherNumbers", "historyUrl"] as const;
+// voucherLinksHtml/voucherLinksText only exist for the approved email
+// (rejected vouchers have nothing to link to — no export ever happens) —
+// kept off ISSUER_REJECTED_EMAIL_PLACEHOLDERS so Admin's placeholder list
+// for that template doesn't advertise a variable that would just render
+// blank there.
+export const ISSUER_APPROVED_EMAIL_PLACEHOLDERS = [
+  ...BASE_PLACEHOLDERS,
+  "voucherLinksHtml",
+  "voucherLinksText",
+] as const;
+export const ISSUER_REJECTED_EMAIL_PLACEHOLDERS = [...BASE_PLACEHOLDERS, "reason"] as const;
 
 const APPROVED_TEMPLATE_COLUMNS = {
   subject: "issuer_approved_subject_template",
@@ -60,8 +96,8 @@ export const DEFAULT_ISSUER_APPROVED_EMAIL_TEMPLATE: EmailTemplate = {
           <td style="padding: 4px 0; font-weight: 600;">{{propertyName}}</td>
         </tr>
         <tr>
-          <td style="padding: 4px 0; color: #666;">Voucher Number(s)</td>
-          <td style="padding: 4px 0; font-weight: 600;">{{voucherNumbers}}</td>
+          <td style="padding: 4px 0; color: #666; vertical-align: top;">Voucher Number(s)</td>
+          <td style="padding: 4px 0; font-weight: 600;">{{voucherLinksHtml}}</td>
         </tr>
       </table>
       <p>
@@ -76,7 +112,8 @@ export const DEFAULT_ISSUER_APPROVED_EMAIL_TEMPLATE: EmailTemplate = {
 Your voucher request has been approved.
 
 Property: {{propertyName}}
-Voucher Number(s): {{voucherNumbers}}
+Voucher Number(s):
+{{voucherLinksText}}
 
 View it here:
 {{historyUrl}}`,
@@ -126,7 +163,11 @@ export function renderIssuerApprovedEmailTemplate(
   template: EmailTemplate,
   input: IssuerApprovedEmailInput,
 ): { subject: string; html: string; text: string } {
-  const vars = baseVars(input);
+  const vars = {
+    ...baseVars(input),
+    voucherLinksHtml: renderVoucherLinksHtml(input.voucherLinks),
+    voucherLinksText: renderVoucherLinksText(input.voucherLinks),
+  };
   return {
     subject: renderTemplate(template.subject, vars),
     html: renderTemplate(template.html, vars),
